@@ -1,0 +1,13 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+prisma/*.db
+
+# Local PGlite development database (scripts/dev-postgres.ts)
+.pglite-data/
+uploads/
