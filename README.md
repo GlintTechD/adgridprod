@@ -12,8 +12,8 @@ A Pan-African OOH intelligence and operations platform with a React frontend and
 4. Open http://localhost:3000
 
 > **Going to production?** [`docs/PRODUCTION_SETUP.md`](docs/PRODUCTION_SETUP.md)
-> is the step-by-step guide: Supabase Postgres (pooler connection strings,
-> migrations, Data API lockdown), Resend (domain verification, sending-scoped API
+> is the step-by-step guide: Neon Postgres (connection strings and migrations),
+> Resend (domain verification, sending-scoped API
 > keys, sender rules), the exact Vercel environment variables, then
 > `npm run verify:prod -- --url https://your-domain --strict` to check a live
 > deployment. Never paste secrets into issues or commits.
@@ -97,8 +97,8 @@ The project is fully configured for seamless one-click deployment on [Vercel](ht
 4. **Environment Variables**:
    - `JWT_ACCESS_SECRET` (required): 48+ random bytes
    - `JWT_REFRESH_SECRET` (required): 48+ random bytes
-   - `DATABASE_URL` (required): Supabase transaction pooler, port `6543`, with `?pgbouncer=true&connection_limit=1`
-   - `DIRECT_URL` (required): Supabase session pooler, port `5432` (migrations)
+   - `NEON_DATABASE_URL` (required): Neon Postgres connection string
+   - `NEON_DIRECT_URL` (optional): direct Neon connection string for migrations; otherwise derived from `NEON_DATABASE_URL`
    - `APP_URL` (required): your deployment URL — emailed links are built from it
    - `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (required): a Sending-access key and a sender on a Resend-verified domain
    - Never set: `PRISMA_DRIVER_ADAPTER`, `ALLOW_DEV_EMAIL_INSPECTION`, `RESEND_API_URL`
@@ -111,7 +111,7 @@ The project is fully configured for seamless one-click deployment on [Vercel](ht
 ## Notes
 
 - The application intentionally keeps the old frontend route structure and central auth contract intact.
-- Data is persisted in PostgreSQL through Prisma. Set `DATABASE_URL` (and `DIRECT_URL` for migrations) to your Supabase project — see `docs/PRODUCTION_SETUP.md`.
+- Data is persisted in PostgreSQL through Prisma. Set `NEON_DATABASE_URL` (and optionally `NEON_DIRECT_URL` if your Neon direct endpoint differs) — see `docs/PRODUCTION_SETUP.md`.
 
 Migrations are not part of the frontend build: run `npm run db:migrate:deploy`
 from a trusted step before serving traffic. Never run `npm run db:seed` against

@@ -1,4 +1,4 @@
-# ADGRID production setup: Resend email + Supabase Postgres
+# ADGRID production setup: Resend email + Neon Postgres
 
 Sign-in on ADGRID is **email + a 6-digit code**. That means production needs
 exactly two services:
@@ -6,7 +6,7 @@ exactly two services:
 | Service | Role |
 | --- | --- |
 | **Resend** | Delivers the verification code, password-reset link, and invitations |
-| **Supabase Postgres** | Stores users, roles, and all platform data |
+| **Neon Postgres** | Stores users, roles, and all platform data |
 
 Google / social sign-in exists in the codebase behind `SUPABASE_URL`, but it is
 **off unless you configure it**, and this guide deliberately leaves it off. No
@@ -18,7 +18,7 @@ Work through the parts in order. Each part ends with a **verify** step, and
 | Part | What it wires up | Time |
 | --- | --- | --- |
 | [0](#part-0-prerequisites) | The few values you need to collect | 5 min |
-| [1](#part-1-supabase-postgres) | Production database | 15 min |
+| [1](#part-1-neon-postgres) | Production database | 15 min |
 | [2](#part-2-resend-email) | Verification codes, resets, invitations | 15 min (+ DNS propagation) |
 | [3](#part-3-vercel-environment-variables) | Deploy configuration | 10 min |
 | [4](#part-4-first-deploy-and-verification) | Go-live checklist | 10 min |
@@ -27,7 +27,7 @@ The steps below use `https://adgrids-mwk1.vercel.app` as the example deployment
 and `adgrids.com` as the example sending domain. Substitute your own values.
 
 > **Never paste secrets into chat, issues, or commits.** Everything here goes into
-> Vercel environment variables, Supabase settings, or your local `.env` (which is
+> Vercel environment variables, Neon settings, or your local `.env` (which is
 > git-ignored). A secret that has been pasted anywhere should be rotated.
 
 ---
@@ -37,7 +37,7 @@ and `adgrids.com` as the example sending domain. Substitute your own values.
 | Item | Why |
 | --- | --- |
 | Your deployment URL (`https://adgrids-mwk1.vercel.app`) | `APP_URL`, emailed links, verification |
-| A Supabase project | The database |
+| A Neon project | The database |
 | A Resend account | Transactional email |
 | A domain you control, plus DNS access | Resend sends from it. Skip only for the interim test path in 2.4 |
 | Vercel project access | Environment variables + redeploy |
@@ -55,48 +55,45 @@ every user out.
 
 ---
 
-## Part 1: Supabase Postgres
+## Part 1: Neon Postgres
 
-The application uses Prisma against Supabase Postgres. Supabase is never reached
-from the browser — all data access goes through the ADGRID server.
+The application uses Prisma against Neon Postgres. Neon is never reached from
+the browser — all data access goes through the ADGRID server.
 
 ### 1.1 Project
 
 If the project already exists, open it and skip to 1.2. Otherwise:
-<https://supabase.com/dashboard> → **New project** → name it, choose the region
-closest to your users, set a **strong database password** and store it in your
-password manager (you need it URL-encoded in the connection strings).
+<https://console.neon.tech/> → **Create project** → choose a name and region
+closest to your users.
 
-### 1.2 Collect the two connection strings
+### 1.2 Collect the connection string
 
-**Project Settings → Database → Connection string.** You need both, because
-serverless functions and migrations have different requirements:
+In the Neon project dashboard, open **Connect** and copy the connection string.
+Use the pooled string for runtime traffic and, if available, a direct (non-pooled)
+string for migrations:
 
-| Purpose | Mode | Port | Env var |
-| --- | --- | --- | --- |
-| Runtime traffic (Vercel functions) | **Transaction** pooler | `6543` | `DATABASE_URL` |
-| Migrations & scripts | **Session** pooler | `5432` | `DIRECT_URL` |
+| Purpose | Mode | Env var |
+| --- | --- | --- |
+| Runtime traffic (Vercel functions) | Pooled | `NEON_DATABASE_URL` |
+| Migrations & scripts | Direct (optional) | `NEON_DIRECT_URL` |
 
+```text
+NEON_DATABASE_URL="postgresql://user:password@ep-example-pooler.region.aws.neon.tech/dbname?sslmode=require"
+NEON_DIRECT_URL="postgresql://user:password@ep-example.region.aws.neon.tech/dbname?sslmode=require"
 ```
-DATABASE_URL="postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-eu-west-2.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1"
-DIRECT_URL="postgresql://postgres.PROJECT_REF:PASSWORD@aws-0-eu-west-2.pooler.supabase.com:5432/postgres"
-```
 
-> **Use the pooler for both.** Direct connections (`db.PROJECT_REF.supabase.co`)
-> are IPv6-only on new projects and Vercel's serverless runtime is IPv4, so
-> migrations run from your machine or from Vercel fail with a connection timeout.
-> The Supavisor pooler is dual-stack. Only use the direct host if you know your
-> machine has IPv6.
->
-> URL-encode reserved characters in the password (`@` → `%40`, `#` → `%23`,
-> `/` → `%2F`). A password containing `@` is the single most common cause of
-> "authentication failed" here.
+If you only have a pooled connection string, set `NEON_DATABASE_URL`; Prisma
+commands derive the direct endpoint by removing `-pooler` from its hostname.
+Set `NEON_DIRECT_URL` explicitly if your direct endpoint differs. If your password
+contains reserved URL characters such as `@`, `#`, or `/`, URL-encode them.
+The runtime allows up to 15 seconds for Neon to wake and accept a connection;
+an explicit `connect_timeout` query parameter takes precedence.
 
-Put both strings in your local `.env` (copy `.env.example` if you have not).
+Put the strings in your local `.env` (copy `.env.example` if you have not).
 
 ### 1.3 Apply the schema
 
-From your machine, with `DATABASE_URL` and `DIRECT_URL` set:
+From your machine, with the Neon URL(s) set:
 
 ```bash
 npm install
@@ -108,23 +105,16 @@ npm run db:migrate:deploy    # applies prisma/migrations/*  (never destructive)
 > users with a published password. Use Part 4.1 to create your first real
 > administrator instead.
 
-### 1.4 Lock down the Data API (important)
+### 1.4 Secure the database
 
-ADGRID talks to Postgres directly, so Supabase's auto-generated REST API is not
-needed and would expose your tables to anyone holding the publishable key:
-
-1. **Project Settings → API → Data API** → disable it (or expose no schemas).
-2. If you cannot disable it, enable **RLS on every table** and create no policies
-   for `anon`. Prisma connects as the database owner and is unaffected by RLS,
-   while PostgREST would then return nothing.
-3. **Project Settings → Database → Network restrictions:** restrict access if
-   your plan supports it; otherwise rely on the pooler plus a strong, rotated
-   password.
+Keep the connection string server-side: never use it in frontend code or expose
+it through a `VITE_` variable. Use a strong database password and rotate it if
+the URL is exposed.
 
 ### 1.5 Verify
 
 ```bash
-npx prisma migrate status        # every migration applied
+node scripts/prisma.mjs migrate status
 ```
 
 After the deploy in Part 4, the live state is visible at:
@@ -135,10 +125,9 @@ curl -s https://adgrids-mwk1.vercel.app/api/health
 ```
 
 `"db":"connected"` is the proof that the runtime URL works from Vercel. If it
-says otherwise, re-check `DATABASE_URL` (port `6543`, `pgbouncer=true`).
+says otherwise, re-check `NEON_DATABASE_URL` and redeploy.
 
 ---
-
 ## Part 2: Resend email
 
 Resend delivers every application email: **signup verification codes**, password
@@ -278,8 +267,8 @@ previews):
 | --- | --- | --- |
 | `NODE_ENV` | `production` | Vercel sets it; set it explicitly anyway |
 | `APP_URL` | `https://adgrids-mwk1.vercel.app` | Emailed links + redirects. Wrong value = links to localhost |
-| `DATABASE_URL` | `postgresql://…pooler…:6543/…?pgbouncer=true&connection_limit=1` | Part 1.2 — transaction pooler |
-| `DIRECT_URL` | `postgresql://…pooler…:5432/…` | Part 1.2 — session pooler |
+| `NEON_DATABASE_URL` | Neon pooled Postgres URL | Part 1.2 — runtime traffic |
+| `NEON_DIRECT_URL` | Neon direct Postgres URL | Optional; Part 1.2 — migrations |
 | `JWT_ACCESS_SECRET` | 48 random bytes | From Part 0. Changing it logs everyone out |
 | `JWT_REFRESH_SECRET` | 48 random bytes | From Part 0 |
 | `ACCESS_TOKEN_TTL` | `15m` | Optional |
@@ -292,7 +281,7 @@ previews):
 | --- | --- |
 | `PRISMA_DRIVER_ADAPTER` | Local-only switch that swaps Prisma onto the WASM engine. A stray copy from `.env` used to break every endpoint at import; the app now ignores it on serverless rather than fail |
 | `DEMO_AUTH_ENABLED` | Demo accounts share one password that is published to the sign-in screen, and one of them is a Platform Admin. Production refuses it regardless of what is set here |
-| `DEMO_PROVISIONING` | Writing demo rows is off on any deployment unless this is `1`. Preview deployments use the same `DATABASE_URL` as production unless you scope it to Production only, so without this guard an open pull request creates tenants and forces live accounts to `ACTIVE` + verified just by building |
+| `DEMO_PROVISIONING` | Writing demo rows is off on any deployment unless this is `1`. Preview deployments may use the same database URL as production unless you scope it to Production only, so without this guard an open pull request creates tenants and forces live accounts to `ACTIVE` + verified just by building |
 | `ALLOW_DEV_EMAIL_INSPECTION` | Unset already disables the endpoint, because `NODE_ENV=production` |
 | `RESEND_API_URL` | Only used to point at a mock Resend in tests |
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_JWT_SECRET`, `SUPABASE_OAUTH_AUTO_PROVISION` | These switch on social sign-in. Leaving them unset keeps the email + code flow as the only way in |
@@ -322,13 +311,13 @@ before promoting a production deploy, so schema changes are never applied by han
 Never run the demo seed in production. Create one Platform Admin:
 
 ```bash
-# with production DATABASE_URL/DIRECT_URL in .env
+# with production NEON_DATABASE_URL (and optional NEON_DIRECT_URL) in .env
 npm run admin:create -- --email you@adgrids.com --name "Your Name"
 # → prints a generated password once; sign in at /admin
 ```
 
 The script prints the masked database host it is about to write to — check it is
-your Supabase host before confirming.
+your Neon host before confirming.
 
 ### 4.2 Run the configuration check
 
@@ -378,9 +367,8 @@ npm run verify:prod -- --url https://adgrids-mwk1.vercel.app --strict
 | Codes reach you but nobody else | Still sending from `onboarding@resend.dev` | Verify your domain and switch `RESEND_FROM_EMAIL` (Part 2.3) |
 | Nothing arrives, no error | Check the spam folder, then the Resend dashboard's delivery status | Add the DMARC record; keep the display name consistent |
 | Signup works locally, `503` in production | `RESEND_API_KEY` / `RESEND_FROM_EMAIL` missing in Vercel | Set them, then **redeploy** — env changes need a new deployment |
-| `P1001: Can't reach database server` | IPv6-only direct connection from IPv4 serverless | Use the Supavisor pooler URLs (Part 1.2) |
-| `prepared statement "s0" already exists` | Transaction pooler without the pgbouncer flag | Keep `?pgbouncer=true&connection_limit=1` in `DATABASE_URL` |
-| `db: error: Environment variable not found: DIRECT_URL` | Migration run without the session URL | Set `DIRECT_URL` in the environment you migrate from |
+| `P1001: Can't reach database server` | Invalid or unreachable Neon connection string | Check the Neon hostname, credentials, and project status |
+| Migration cannot connect | Pooled endpoint is unsuitable for migrations | Set `NEON_DIRECT_URL` to Neon’s direct connection string |
 | Codes emailed but links point at `localhost` | `APP_URL` unset or wrong | Set `APP_URL` to the deployment URL and redeploy |
 | Verification code rejected as incorrect | Code expired (10 min) or 5 attempts used | Request a new code; codes are single-use |
 | `429 cooldown_active` | A code was requested less than 60s ago | Wait the reported seconds; that is the anti-abuse limit |
@@ -403,18 +391,18 @@ the real application code rather than a sketch of it:
 
 Not verifiable from the build environment, and therefore to re-confirm on the
 real project: live sends through `api.resend.com` (sandbox has no outbound access)
-and connectivity from Vercel to your Supabase pooler (Part 1.5's `/api/health`
+and connectivity from Vercel to Neon (Part 1.5's `/api/health`
 call is the check).
 
 ## Security checklist
 
 - [ ] `RESEND_API_KEY` has **Sending** access only, restricted to your domain
-- [ ] Supabase **Data API / PostgREST disabled** (or RLS everywhere, no `anon` policies)
+- [ ] Neon database connection string is stored only in server-side environment variables
 - [ ] Production DB password is strong, URL-encoded, and in a password manager
 - [ ] `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` are 48+ random bytes, unique per environment
 - [ ] `PRISMA_DRIVER_ADAPTER` and `ALLOW_DEV_EMAIL_INSPECTION` are absent in production
 - [ ] `SUPABASE_*` variables are absent, so social sign-in stays disabled
 - [ ] `npm run verify:prod -- --strict` passes
 - [ ] `db:seed` never run against production
-- [ ] Supabase backups enabled (Project Settings → Database → Backups)
+- [ ] Neon backups / restore options reviewed for the project
 - [ ] An alert exists for spikes in `LOGIN_FAILED` / `OTP_SEND_FAILED_ON_LOGIN` in `AuditLog`

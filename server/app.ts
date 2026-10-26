@@ -344,7 +344,12 @@ app.get(`${API_PREFIX}/health/config`, async (_req: Request, res: Response) => {
     appUrl: process.env.APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null),
     database: {
       connected: databaseConnected,
-      mode: process.env.PRISMA_DRIVER_ADAPTER === 'pg' ? 'pg driver adapter' : 'DATABASE_URL',
+      mode:
+        process.env.PRISMA_DRIVER_ADAPTER === 'pg'
+          ? 'pg driver adapter'
+          : process.env.NEON_DATABASE_URL
+            ? 'NEON_DATABASE_URL'
+            : 'DATABASE_URL',
     },
     email,
     // Social sign-in is not part of this build: email + 6-digit code is the
@@ -2673,7 +2678,13 @@ export async function startServer() {
     }
 
     console.log(
-      `[Database] Prisma using ${process.env.PRISMA_DRIVER_ADAPTER === 'pg' ? 'pg driver adapter (local Postgres)' : 'DATABASE_URL connection'}`
+      `[Database] Prisma using ${
+        process.env.PRISMA_DRIVER_ADAPTER === 'pg'
+          ? 'pg driver adapter (local Postgres)'
+          : process.env.NEON_DATABASE_URL
+            ? 'NEON_DATABASE_URL connection'
+            : 'DATABASE_URL connection'
+      }`
     );
   });
 }

@@ -10,7 +10,7 @@
  *   npx tsx scripts/create-platform-admin.ts --email you@company.com --password 'Custom-Passw0rd!'
  *   npx tsx scripts/create-platform-admin.ts --email you@company.com --unverified
  *
- * Requires DATABASE_URL (and DIRECT_URL) to point at the target database.
+ * Requires NEON_DATABASE_URL (or DATABASE_URL) to point at the target database.
  */
 import crypto from 'node:crypto';
 import bcrypt from 'bcryptjs';
@@ -43,7 +43,12 @@ async function main() {
     process.exit(1);
   }
 
-  const databaseHost = (process.env.DIRECT_URL || process.env.DATABASE_URL || '')
+  const databaseHost = (
+    process.env.NEON_DATABASE_URL ||
+    process.env.DATABASE_URL ||
+    process.env.DIRECT_URL ||
+    ''
+  )
     .replace(/\/\/[^@]*@/, '//***@')
     .split('?')[0];
   console.log(`[admin] target database: ${databaseHost || '(unset)'}`);

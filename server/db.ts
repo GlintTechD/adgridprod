@@ -2,6 +2,10 @@ import 'dotenv/config';
 import { createRequire } from 'node:module';
 import { PrismaClient } from '@prisma/client';
 
+if (process.env.NEON_DATABASE_URL) {
+  process.env.DATABASE_URL = process.env.NEON_DATABASE_URL;
+}
+
 const require = createRequire(import.meta.url);
 
 declare global {
@@ -14,9 +18,9 @@ const PRISMA_LOG: any = process.env.NODE_ENV === 'development' ? ['warn', 'error
 /**
  * Prisma client factory.
  *
- * Production runs on Supabase Postgres: DATABASE_URL must be the Supavisor
- * transaction-pooler URL (port 6543 with ?pgbouncer=true&connection_limit=1)
- * and DIRECT_URL the session-pooler URL used by migrations — see
+ * Production uses Neon Postgres. NEON_DATABASE_URL is used for runtime traffic;
+ * NEON_DIRECT_URL may be set for migrations, otherwise NEON_DATABASE_URL is
+ * used. DATABASE_URL and DIRECT_URL remain supported for compatibility — see
  * docs/PRODUCTION_SETUP.md.
  *
  * Local development can instead run against the embedded Postgres started by
@@ -73,14 +77,32 @@ function describeDatabaseUrl(url: string): string {
 }
 
 function assertDatabaseUrl(): void {
+  if (process.env.NEON_DATABASE_URL) {
+    let neonUrl: URL;
+    try {
+      neonUrl = new URL(process.env.NEON_DATABASE_URL);
+    } catch {
+      throw new Error('[Database] NEON_DATABASE_URL is not a valid connection string.');
+    }
+
+    if (!['postgres:', 'postgresql:'].includes(neonUrl.protocol)) {
+      throw new Error('[Database] NEON_DATABASE_URL must use the PostgreSQL protocol.');
+    }
+
+    if (!neonUrl.searchParams.has('connect_timeout')) {
+      neonUrl.searchParams.set('connect_timeout', '15');
+    }
+    process.env.DATABASE_URL = neonUrl.toString();
+  }
+
   const url = process.env.DATABASE_URL;
 
   if (!url) {
     // Fail with a named cause instead of falling back to a local file: there is
     // no SQLite fallback any more, and every query would fail confusingly.
     throw new Error(
-      '[Database] DATABASE_URL is not set for this environment. Set it to the Supabase ' +
-        'transaction-pooler URL (port 6543, ?pgbouncer=true&connection_limit=1) — see docs/PRODUCTION_SETUP.md.'
+      '[Database] NEON_DATABASE_URL (or DATABASE_URL) is not set for this environment. ' +
+        'Configure a Neon Postgres connection string — see docs/PRODUCTION_SETUP.md.'
     );
   }
 
@@ -90,7 +112,7 @@ function assertDatabaseUrl(): void {
     throw new Error(
       `[Database] DATABASE_URL points at the local development database (${describeDatabaseUrl(
         url
-      )}), which this runtime cannot reach. Set the Supabase pooler URL for Production and Preview, then redeploy.`
+      )}), which this runtime cannot reach. Set the Neon connection string for Production and Preview, then redeploy.`
     );
   }
 }

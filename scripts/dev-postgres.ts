@@ -3,7 +3,7 @@
  *
  * Spins up an embedded Postgres (WASM) that speaks the real Postgres wire
  * protocol, so Prisma Client and `prisma migrate` can connect to it exactly as
- * they would to a Supabase database. This exists so signup / sign-in / OTP
+ * they would to a Neon database. This exists so signup / sign-in / OTP
  * verification can be exercised locally without Docker or a cloud project.
  *
  * Usage:
@@ -14,7 +14,7 @@
  *   DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5433/postgres"
  *   DIRECT_URL="postgresql://postgres:postgres@127.0.0.1:5433/postgres"
  *
- * This is a DEVELOPMENT convenience only. Production uses Supabase Postgres.
+ * This is a DEVELOPMENT convenience only. Production uses Neon Postgres.
  */
 import fs from 'node:fs';
 import path from 'node:path';

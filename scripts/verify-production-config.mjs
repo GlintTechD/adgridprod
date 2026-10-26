@@ -1,7 +1,7 @@
 /**
  * Verify a deployed ADGRID environment is correctly configured for production.
  *
- * Run this straight after a deploy, and again after changing Resend or Supabase
+ * Run this straight after a deploy, and again after changing Resend or Neon
  * settings. It reads /api/health and /api/health/config (no secrets are exposed)
  * and reports exactly what still needs attention.
  *
@@ -100,7 +100,7 @@ async function main() {
   report(environment === 'production' ? 'pass' : 'warn', 'Build runs in production mode', `NODE_ENV=${environment}`);
   report(appUrl ? 'pass' : 'fail', 'Public app URL is configured', appUrl || 'set APP_URL');
   report(
-    database?.mode === 'DATABASE_URL' ? 'pass' : 'warn',
+    ['NEON_DATABASE_URL', 'DATABASE_URL'].includes(database?.mode) ? 'pass' : 'warn',
     'Database driver',
     `${database?.mode}${database?.mode === 'pg driver adapter' ? ' (development-only switch is on!)' : ''}`
   );
